@@ -1,0 +1,969 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>日報／週報管理</title>
+<style>
+  /* ===== 基礎變數與配色（淺色主題，貼近 claude.ai 的簡潔感） ===== */
+  :root {
+    --bg:          #faf9f7;   /* 整體背景 */
+    --surface:     #ffffff;   /* 卡片／面板背景 */
+    --border:      #e8e6e1;   /* 細邊框 */
+    --border-hov:  #d6d3cd;
+    --text:        #2b2b29;   /* 主文字 */
+    --text-soft:   #6e6b66;   /* 次要文字 */
+    --text-faint:  #9b988f;   /* 最淺文字 */
+    --accent:      #c96442;   /* 主色（claude 風的暖橘） */
+    --accent-soft: #f4e9e4;
+    --selected:    #f3efe9;   /* 列表選中底色 */
+    --hover:       #f6f4f0;
+    /* 專案 tag 顏色：BZ 一色、BC 另一色 */
+    --bz-bg: #e3edf7; --bz-fg: #2f5d8a;
+    --bc-bg: #eae6f7; --bc-fg: #5b4a93;
+    /* 類型 tag */
+    --tag-bg: #f0eeea; --tag-fg: #6e6b66;
+    --danger: #c0392b;
+    --ok: #3a7d44;
+    --radius: 10px;
+    --radius-sm: 6px;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Microsoft JhengHei", "Noto Sans TC", "PingFang TC", system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 14px;
+    line-height: 1.7;
+  }
+
+  button {
+    font-family: inherit;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    border-radius: var(--radius-sm);
+    padding: 6px 12px;
+    font-size: 13px;
+    transition: background .12s, border-color .12s;
+  }
+  button:hover { background: var(--hover); border-color: var(--border-hov); }
+  button:active { transform: translateY(0.5px); }
+  button.primary {
+    background: var(--accent); color: #fff; border-color: var(--accent);
+  }
+  button.primary:hover { background: #b5573a; border-color: #b5573a; }
+  button.danger {
+    color: var(--danger); border-color: #e7c6c1;
+  }
+  button.danger:hover { background: #fceeec; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+
+  input, select, textarea {
+    font-family: inherit;
+    font-size: 13px;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 6px 9px;
+    outline: none;
+  }
+  input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+
+  /* ===== 整體版面：頂列 / 主體 / 底列 ===== */
+  .app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+  }
+
+  /* 頂部工具列 */
+  .topbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  .topbar .title {
+    font-weight: 700; font-size: 15px; margin-right: 4px; white-space: nowrap;
+  }
+  .filter-tabs { display: flex; gap: 4px; }
+  .filter-tabs button {
+    padding: 5px 14px; border-radius: 999px;
+  }
+  .filter-tabs button.active {
+    background: var(--accent-soft); border-color: #e5c9bf; color: var(--accent); font-weight: 600;
+  }
+  .search-wrap { flex: 1; min-width: 160px; position: relative; }
+  .search-wrap input { width: 100%; padding-left: 30px; }
+  .search-wrap::before {
+    content: "🔍"; position: absolute; left: 9px; top: 50%; transform: translateY(-50%);
+    font-size: 12px; opacity: .6;
+  }
+
+  /* 主體：左右兩欄 */
+  .main {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+  }
+  .list-pane {
+    width: 320px;
+    min-width: 240px;
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    background: var(--surface);
+  }
+  .detail-pane {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* 列表項 */
+  .list-item {
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: background .1s;
+  }
+  .list-item:hover { background: var(--hover); }
+  .list-item.selected { background: var(--selected); }
+  .list-item .date { font-weight: 600; min-width: 52px; font-variant-numeric: tabular-nums; }
+  .list-item .preview {
+    flex: 1; color: var(--text-faint); font-size: 12px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  /* tag 樣式 */
+  .tag {
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.6;
+    white-space: nowrap;
+  }
+  .tag.bz { background: var(--bz-bg); color: var(--bz-fg); }
+  .tag.bc { background: var(--bc-bg); color: var(--bc-fg); }
+  .tag.type { background: var(--tag-bg); color: var(--tag-fg); font-weight: 500; }
+
+  .list-empty {
+    padding: 30px 16px; text-align: center; color: var(--text-faint); font-size: 13px;
+  }
+
+  /* 右側詳情區 */
+  .detail-empty {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    color: var(--text-faint); text-align: center; padding: 40px; font-size: 14px;
+  }
+  .detail-toolbar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 12px 18px; border-bottom: 1px solid var(--border); background: var(--surface);
+  }
+  .detail-toolbar .field { display: flex; align-items: center; gap: 5px; }
+  .detail-toolbar label { font-size: 12px; color: var(--text-soft); }
+  .detail-toolbar .spacer { flex: 1; }
+  .save-hint { font-size: 12px; color: var(--text-faint); min-width: 56px; }
+  .save-hint.saving { color: var(--accent); }
+  .save-hint.saved { color: var(--ok); }
+
+  .week-fields { display: none; align-items: center; gap: 8px; }
+  .week-fields.show { display: flex; }
+
+  .content-area {
+    flex: 1;
+    margin: 0;
+    padding: 18px;
+    overflow-y: auto;
+  }
+  .content-area textarea {
+    width: 100%;
+    height: 100%;
+    min-height: 300px;
+    resize: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    font-family: "Cascadia Code", "Consolas", "Menlo", ui-monospace, monospace;
+    font-size: 13px;
+    line-height: 1.75;
+    white-space: pre-wrap;
+  }
+
+  /* 底部狀態列 */
+  .statusbar {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 9px 16px;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+    font-size: 12px; color: var(--text-soft);
+  }
+  .statusbar .spacer { flex: 1; }
+  .statusbar .note { color: var(--text-faint); font-size: 11px; }
+  #usageText { font-variant-numeric: tabular-nums; }
+
+  /* ===== 彈窗（modal） ===== */
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(40,38,34,.42);
+    display: none; align-items: center; justify-content: center; z-index: 100;
+    padding: 20px;
+  }
+  .modal-overlay.show { display: flex; }
+  .modal {
+    background: var(--surface); border-radius: var(--radius);
+    max-width: 440px; width: 100%; padding: 22px 24px;
+    box-shadow: 0 10px 40px rgba(0,0,0,.15);
+    border: 1px solid var(--border);
+  }
+  .modal h3 { margin: 0 0 10px; font-size: 16px; }
+  .modal p { margin: 0 0 18px; color: var(--text-soft); line-height: 1.7; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+
+  /* 小提示 toast */
+  .toast {
+    position: fixed; bottom: 60px; left: 50%; transform: translateX(-50%) translateY(20px);
+    background: #2b2b29; color: #fff; padding: 9px 18px; border-radius: 999px;
+    font-size: 13px; opacity: 0; pointer-events: none; transition: all .25s; z-index: 200;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* 行動裝置：左右改上下堆疊 */
+  @media (max-width: 720px) {
+    .main { flex-direction: column; }
+    .list-pane {
+      width: 100%; min-width: 0; max-height: 38vh;
+      border-right: none; border-bottom: 1px solid var(--border);
+    }
+    .detail-pane { flex: 1; }
+    .topbar { gap: 8px; }
+    .topbar .title { width: 100%; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ===== 頂部工具列 ===== -->
+  <div class="topbar">
+    <span class="title">📋 日報／週報管理</span>
+    <div class="filter-tabs" id="filterTabs">
+      <button data-filter="all" class="active">全部</button>
+      <button data-filter="BZ">BZ</button>
+      <button data-filter="BC">BC</button>
+    </div>
+    <div class="search-wrap">
+      <input type="text" id="searchInput" placeholder="搜尋內容或日期…" autocomplete="off">
+    </div>
+    <button class="primary" id="addBtn">＋ 新增</button>
+  </div>
+
+  <!-- ===== 主體 ===== -->
+  <div class="main">
+    <!-- 左側列表 -->
+    <div class="list-pane" id="listPane"></div>
+
+    <!-- 右側詳情／編輯 -->
+    <div class="detail-pane" id="detailPane">
+      <div class="detail-empty" id="detailEmpty">
+        按右上角「＋ 新增」開始記錄你的第一篇日報
+      </div>
+      <!-- 編輯區（動態顯示） -->
+      <div id="editorWrap" style="display:none; flex:1; flex-direction:column; min-height:0;">
+        <div class="detail-toolbar">
+          <div class="field">
+            <label>日期</label>
+            <input type="date" id="fDate">
+          </div>
+          <div class="field">
+            <label>專案</label>
+            <select id="fProject">
+              <option value="BZ">BZ</option>
+              <option value="BC">BC</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>類型</label>
+            <select id="fType">
+              <option value="daily">日報</option>
+              <option value="weekly">週報</option>
+            </select>
+          </div>
+          <div class="week-fields" id="weekFields">
+            <div class="field"><label>週期起</label><input type="date" id="fWeekStart"></div>
+            <div class="field"><label>迄</label><input type="date" id="fWeekEnd"></div>
+          </div>
+          <div class="spacer"></div>
+          <span class="save-hint" id="saveHint"></span>
+        </div>
+
+        <div class="content-area">
+          <textarea id="fContent" placeholder="在此貼上或輸入日報／週報內容…"></textarea>
+        </div>
+
+        <div class="detail-toolbar" style="border-top:1px solid var(--border); border-bottom:none;">
+          <button id="copyBtn">📋 複製</button>
+          <button class="danger" id="deleteBtn">🗑 刪除</button>
+          <div class="spacer"></div>
+          <button class="primary" id="saveBtn" style="display:none;">儲存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 底部狀態列 ===== -->
+  <div class="statusbar">
+    <button id="exportBtn">⬇ 匯出備份</button>
+    <button id="importBtn">⬆ 匯入備份</button>
+    <input type="file" id="importFile" accept="application/json,.json" style="display:none;">
+    <span>上次備份：<b id="lastBackup">—</b></span>
+    <span class="spacer"></span>
+    <span id="usageText">用量計算中…</span>
+    <span class="note">｜資料存在目前這個瀏覽器，換瀏覽器或清快取會消失，請定期匯出備份</span>
+  </div>
+</div>
+
+<!-- 通用彈窗 -->
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <h3 id="modalTitle"></h3>
+    <p id="modalBody"></p>
+    <div class="modal-actions" id="modalActions"></div>
+  </div>
+</div>
+
+<!-- toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+/* =========================================================================
+   日報／週報管理 App — 單檔純前端，資料存於 localStorage
+   ========================================================================= */
+
+/* ---------- 常數 ---------- */
+const STORE_KEY   = 'daily_reports_data';   // 主資料 key
+const BACKUP_KEY  = 'last_backup_date';     // 上次備份日期 key
+const BACKUP_DAYS = 30;                      // 超過幾天提醒備份
+
+/* ---------- 全域狀態 ---------- */
+let reports = [];          // 所有記錄
+let currentId = null;      // 目前選中的記錄 id
+let currentFilter = 'all'; // 篩選：all / BZ / BC
+let searchText = '';       // 搜尋關鍵字
+let saveTimer = null;      // debounce 計時器
+let isNewDraft = false;    // 目前編輯區是否為「尚未儲存的新草稿」
+
+/* ---------- 小工具函式 ---------- */
+
+// 產生唯一 id
+function genId() {
+  return 'r_' + Date.now().toString(36) + '_' + Math.floor(Math.random() * 1e6).toString(36);
+}
+
+// 取得今天 ISO 日期字串 YYYY-MM-DD（依本地時區）
+function todayISO() {
+  const d = new Date();
+  const off = d.getTimezoneOffset() * 60000;
+  return new Date(d - off).toISOString().slice(0, 10);
+}
+
+// 現在時間 ISO（含時分秒）
+function nowISO() {
+  const d = new Date();
+  const off = d.getTimezoneOffset() * 60000;
+  return new Date(d - off).toISOString().slice(0, 19);
+}
+
+// 顯示用日期：YYYY-MM-DD → M/D
+function fmtShort(iso) {
+  if (!iso || iso.length < 10) return iso || '';
+  const [, m, d] = iso.split('-');
+  return parseInt(m, 10) + '/' + parseInt(d, 10);
+}
+
+// 顯示用日期：YYYY-MM-DD → YYYY/MM/DD
+function fmtFull(iso) {
+  if (!iso || iso.length < 10) return iso || '';
+  return iso.replace(/-/g, '/');
+}
+
+// HTML 跳脫
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+const TYPE_LABEL = { daily: '日', weekly: '週' };
+
+/* ---------- localStorage 讀寫（含錯誤處理） ---------- */
+
+// 載入資料
+function loadData() {
+  try {
+    const raw = localStorage.getItem(STORE_KEY);
+    reports = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(reports)) reports = [];
+  } catch (e) {
+    console.error('讀取資料失敗', e);
+    reports = [];
+  }
+}
+
+// 寫入資料；回傳是否成功
+function saveData() {
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify(reports));
+    updateUsage();
+    return true;
+  } catch (e) {
+    console.error('寫入失敗', e);
+    showModal({
+      title: '⚠️ 儲存失敗',
+      body: '瀏覽器儲存空間可能已滿或被限制。請先「匯出備份」保存資料，再清理一些舊記錄。',
+      actions: [{ label: '我知道了', primary: true }]
+    });
+    return false;
+  }
+}
+
+/* ---------- 排序與篩選 ---------- */
+
+// 依規格排序：date 由新到舊；同日依 project（BZ 先）再依 type（daily 先）
+function sortReports(arr) {
+  const projOrder = { BZ: 0, BC: 1 };
+  const typeOrder = { daily: 0, weekly: 1 };
+  return arr.slice().sort((a, b) => {
+    if (a.date !== b.date) return a.date < b.date ? 1 : -1; // 新到舊
+    const pa = projOrder[a.project] ?? 9, pb = projOrder[b.project] ?? 9;
+    if (pa !== pb) return pa - pb;
+    const ta = typeOrder[a.type] ?? 9, tb = typeOrder[b.type] ?? 9;
+    return ta - tb;
+  });
+}
+
+// 取得目前要顯示的清單（套用篩選 + 搜尋）
+function getVisible() {
+  let list = reports;
+  if (currentFilter !== 'all') list = list.filter(r => r.project === currentFilter);
+  const q = searchText.trim().toLowerCase();
+  if (q) {
+    list = list.filter(r =>
+      (r.content || '').toLowerCase().includes(q) ||
+      (r.date || '').toLowerCase().includes(q) ||
+      fmtFull(r.date).includes(q) || fmtShort(r.date).includes(q)
+    );
+  }
+  return sortReports(list);
+}
+
+/* ---------- 渲染列表 ---------- */
+function renderList() {
+  const pane = document.getElementById('listPane');
+  const visible = getVisible();
+  pane.innerHTML = '';
+
+  if (visible.length === 0) {
+    const div = document.createElement('div');
+    div.className = 'list-empty';
+    div.textContent = reports.length === 0
+      ? '尚無任何記錄'
+      : '找不到符合條件的記錄';
+    pane.appendChild(div);
+    return;
+  }
+
+  visible.forEach(r => {
+    const item = document.createElement('div');
+    item.className = 'list-item' + (r.id === currentId ? ' selected' : '');
+    item.dataset.id = r.id;
+    const projCls = r.project === 'BZ' ? 'bz' : 'bc';
+    // 內容預覽：取第一行非空白文字
+    const firstLine = (r.content || '').split('\n').find(l => l.trim()) || '（空白）';
+    item.innerHTML =
+      '<span class="date">' + esc(fmtShort(r.date)) + '</span>' +
+      '<span class="tag ' + projCls + '">' + esc(r.project) + '</span>' +
+      '<span class="tag type">' + (TYPE_LABEL[r.type] || '?') + '</span>' +
+      '<span class="preview">' + esc(firstLine) + '</span>';
+    item.addEventListener('click', () => selectReport(r.id));
+    pane.appendChild(item);
+  });
+}
+
+/* ---------- 選取 / 顯示記錄 ---------- */
+function selectReport(id) {
+  // 切換前先確保目前草稿/編輯已寫入
+  flushSave();
+
+  const r = reports.find(x => x.id === id);
+  if (!r) return;
+  currentId = id;
+  isNewDraft = false;
+
+  document.getElementById('detailEmpty').style.display = 'none';
+  document.getElementById('editorWrap').style.display = 'flex';
+  document.getElementById('saveBtn').style.display = 'none'; // 既有記錄即時存，不顯示儲存鈕
+
+  document.getElementById('fDate').value = r.date || '';
+  document.getElementById('fProject').value = r.project || 'BZ';
+  document.getElementById('fType').value = r.type || 'daily';
+  document.getElementById('fWeekStart').value = r.weekStart || '';
+  document.getElementById('fWeekEnd').value = r.weekEnd || '';
+  document.getElementById('fContent').value = r.content || '';
+  toggleWeekFields();
+  setSaveHint('');
+
+  renderList();
+}
+
+/* ---------- 新增（右側出現空白編輯區） ---------- */
+function startNew() {
+  flushSave();
+  currentId = null;
+  isNewDraft = true;
+
+  document.getElementById('detailEmpty').style.display = 'none';
+  document.getElementById('editorWrap').style.display = 'flex';
+  document.getElementById('saveBtn').style.display = ''; // 新草稿要按儲存
+
+  document.getElementById('fDate').value = todayISO();
+  document.getElementById('fProject').value = currentFilter === 'BC' ? 'BC' : 'BZ';
+  document.getElementById('fType').value = 'daily';
+  document.getElementById('fWeekStart').value = '';
+  document.getElementById('fWeekEnd').value = '';
+  document.getElementById('fContent').value = '';
+  toggleWeekFields();
+  setSaveHint('尚未儲存');
+
+  renderList();
+  document.getElementById('fContent').focus();
+}
+
+// 週報時顯示週期欄位
+function toggleWeekFields() {
+  const isWeekly = document.getElementById('fType').value === 'weekly';
+  document.getElementById('weekFields').classList.toggle('show', isWeekly);
+}
+
+/* ---------- 儲存草稿（新增按儲存時） ---------- */
+function saveDraft() {
+  const date = document.getElementById('fDate').value;
+  if (!date) { toast('請先選擇日期'); return; }
+  const project = document.getElementById('fProject').value;
+  const type = document.getElementById('fType').value;
+  const content = document.getElementById('fContent').value;
+
+  // 重複偵測：同 日期+專案+類型
+  const dup = reports.find(r =>
+    r.date === date && r.project === project && r.type === type);
+
+  if (dup) {
+    const pLabel = project + (type === 'daily' ? ' 日報' : ' 週報');
+    showModal({
+      title: '已有重複的記錄',
+      body: '已有 ' + fmtShort(date) + ' 的 ' + pLabel + '，要覆蓋還是另存為新的一筆？',
+      actions: [
+        { label: '覆蓋', primary: true, onClick: () => { overwrite(dup); } },
+        { label: '另存為新的一筆', onClick: () => { commitNew(); } },
+        { label: '取消' }
+      ]
+    });
+    return;
+  }
+  commitNew();
+
+  // 覆蓋既有那筆
+  function overwrite(target) {
+    target.date = date;
+    target.project = project;
+    target.type = type;
+    target.content = content;
+    target.weekStart = document.getElementById('fWeekStart').value || '';
+    target.weekEnd = document.getElementById('fWeekEnd').value || '';
+    target.updatedAt = nowISO();
+    if (saveData()) {
+      isNewDraft = false;
+      selectReport(target.id);
+      toast('已覆蓋既有記錄');
+    }
+  }
+
+  // 建立新記錄
+  function commitNew() {
+    const rec = {
+      id: genId(),
+      date, project, type, content,
+      weekStart: document.getElementById('fWeekStart').value || '',
+      weekEnd: document.getElementById('fWeekEnd').value || '',
+      createdAt: nowISO(),
+      updatedAt: nowISO()
+    };
+    reports.push(rec);
+    if (saveData()) {
+      isNewDraft = false;
+      selectReport(rec.id);
+      toast('已儲存');
+    }
+  }
+}
+
+/* ---------- 即時自動儲存（編輯既有記錄） ---------- */
+function scheduleAutoSave() {
+  if (isNewDraft) { setSaveHint('尚未儲存'); return; } // 新草稿不自動存，要按儲存
+  setSaveHint('儲存中…', 'saving');
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(doAutoSave, 500); // debounce 500ms
+}
+
+function doAutoSave() {
+  clearTimeout(saveTimer); saveTimer = null;
+  if (!currentId || isNewDraft) return;
+  const r = reports.find(x => x.id === currentId);
+  if (!r) return;
+
+  const newDate = document.getElementById('fDate').value;
+  const newProject = document.getElementById('fProject').value;
+  const newType = document.getElementById('fType').value;
+
+  r.date = newDate || r.date;
+  r.project = newProject;
+  r.type = newType;
+  r.content = document.getElementById('fContent').value;
+  r.weekStart = document.getElementById('fWeekStart').value || '';
+  r.weekEnd = document.getElementById('fWeekEnd').value || '';
+  r.updatedAt = nowISO();
+
+  if (saveData()) {
+    setSaveHint('已儲存', 'saved');
+    renderList(); // 日期/專案/類型可能改變，刷新列表
+  }
+}
+
+// 切換或關閉前立即寫入未存的變更
+function flushSave() {
+  if (saveTimer) doAutoSave();
+}
+
+function setSaveHint(text, cls) {
+  const el = document.getElementById('saveHint');
+  el.textContent = text || '';
+  el.className = 'save-hint' + (cls ? ' ' + cls : '');
+}
+
+/* ---------- 刪除（二次確認） ---------- */
+function deleteCurrent() {
+  if (isNewDraft) {
+    // 尚未儲存的草稿，直接清掉編輯區
+    closeEditor();
+    return;
+  }
+  if (!currentId) return;
+  showModal({
+    title: '確定刪除這筆記錄？',
+    body: '此動作無法復原。',
+    actions: [
+      { label: '刪除', danger: true, onClick: () => {
+          reports = reports.filter(r => r.id !== currentId);
+          saveData();
+          currentId = null;
+          closeEditor();
+          toast('已刪除');
+        }
+      },
+      { label: '取消' }
+    ]
+  });
+}
+
+function closeEditor() {
+  currentId = null; isNewDraft = false;
+  document.getElementById('editorWrap').style.display = 'none';
+  document.getElementById('detailEmpty').style.display = 'flex';
+  renderList();
+}
+
+/* ---------- 複製 ---------- */
+async function copyCurrent() {
+  const text = document.getElementById('fContent').value;
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (e) {
+    // 後備方案：用隱藏 textarea + execCommand
+    const ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch (_) {}
+    document.body.removeChild(ta);
+  }
+  toast('✓ 已複製');
+}
+
+/* ---------- 匯出備份 ---------- */
+function exportBackup() {
+  const data = JSON.stringify(reports, null, 2);
+  const blob = new Blob([data], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = '日報備份_' + todayISO() + '.json';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+
+  // 更新上次備份日期
+  try { localStorage.setItem(BACKUP_KEY, todayISO()); } catch (_) {}
+  updateBackupLabel();
+  toast('已匯出備份');
+}
+
+/* ---------- 匯入備份 ---------- */
+function importBackup(file) {
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    let parsed;
+    try {
+      parsed = JSON.parse(e.target.result);
+    } catch (err) {
+      showModal({ title: '匯入失敗', body: '檔案不是有效的 JSON 格式，請確認後再試。',
+        actions: [{ label: '我知道了', primary: true }] });
+      return;
+    }
+    // 驗證結構：必須是陣列，且每筆有基本欄位
+    if (!Array.isArray(parsed)) {
+      showModal({ title: '匯入失敗', body: '檔案內容格式不符（應為記錄陣列）。',
+        actions: [{ label: '我知道了', primary: true }] });
+      return;
+    }
+    const valid = parsed.filter(r => r && typeof r === 'object' && 'content' in r && 'date' in r);
+    if (valid.length === 0) {
+      showModal({ title: '匯入失敗', body: '檔案中找不到可用的記錄。',
+        actions: [{ label: '我知道了', primary: true }] });
+      return;
+    }
+    // 補齊缺漏欄位
+    valid.forEach(r => {
+      if (!r.id) r.id = genId();
+      if (!r.project) r.project = 'BZ';
+      if (!r.type) r.type = 'daily';
+      if (!r.createdAt) r.createdAt = nowISO();
+      if (!r.updatedAt) r.updatedAt = r.createdAt;
+    });
+
+    if (reports.length === 0) {
+      // 目前沒資料，直接匯入
+      reports = valid; saveData(); currentId = null; closeEditor();
+      toast('已匯入 ' + valid.length + ' 筆');
+      return;
+    }
+
+    // 已有資料 → 詢問覆蓋或合併
+    showModal({
+      title: '匯入備份',
+      body: '目前已有 ' + reports.length + ' 筆資料。要如何處理匯入的 ' + valid.length + ' 筆？',
+      actions: [
+        { label: '覆蓋（清空後全換）', danger: true, onClick: () => {
+            reports = valid; saveData(); currentId = null; closeEditor();
+            toast('已覆蓋為匯入資料');
+          }
+        },
+        { label: '合併', primary: true, onClick: () => {
+            mergeImport(valid);
+            toast('已合併匯入');
+          }
+        },
+        { label: '取消' }
+      ]
+    });
+  };
+  reader.readAsText(file);
+}
+
+// 合併：相同 id 或相同「日期+專案+類型」以匯入檔為準
+function mergeImport(incoming) {
+  const keyOf = r => r.date + '|' + r.project + '|' + r.type;
+  const byId = new Map(reports.map(r => [r.id, r]));
+  const byKey = new Map(reports.map(r => [keyOf(r), r]));
+
+  incoming.forEach(inc => {
+    let existing = byId.get(inc.id) || byKey.get(keyOf(inc));
+    if (existing) {
+      // 以匯入檔為準：用 existing 的位置替換
+      Object.assign(existing, inc);
+    } else {
+      reports.push(inc);
+      byId.set(inc.id, inc);
+      byKey.set(keyOf(inc), inc);
+    }
+  });
+  saveData();
+  currentId = null; closeEditor();
+}
+
+/* ---------- localStorage 用量顯示 ---------- */
+function updateUsage() {
+  try {
+    const bytes = new Blob([localStorage.getItem(STORE_KEY) || '']).size;
+    const mb = bytes / (1024 * 1024);
+    let sizeStr = mb >= 0.01 ? mb.toFixed(2) + ' MB'
+                : (bytes / 1024).toFixed(1) + ' KB';
+    document.getElementById('usageText').textContent =
+      '已使用 ' + sizeStr + ' / 約 5 MB（共 ' + reports.length + ' 筆）';
+  } catch (_) {
+    document.getElementById('usageText').textContent = '';
+  }
+}
+
+/* ---------- 上次備份標籤 ---------- */
+function updateBackupLabel() {
+  const d = localStorage.getItem(BACKUP_KEY);
+  document.getElementById('lastBackup').textContent = d ? fmtFull(d) : '尚未備份';
+}
+
+/* ---------- 啟動備份提醒 ---------- */
+function checkBackupReminder() {
+  const last = localStorage.getItem(BACKUP_KEY);
+  let needRemind = false;
+  if (reports.length === 0) return; // 沒資料就不提醒
+  if (!last) {
+    needRemind = true; // 從未備份過
+  } else {
+    const diff = (new Date(todayISO()) - new Date(last)) / 86400000;
+    if (diff > BACKUP_DAYS) needRemind = true;
+  }
+  if (!needRemind) return;
+
+  showModal({
+    title: '🛡 該備份囉',
+    body: (last ? '距離上次備份已超過 ' + BACKUP_DAYS + ' 天。' : '你還沒有備份過資料。')
+        + '資料只存在這個瀏覽器，建議匯出一份 JSON 備份比較安心。',
+    actions: [
+      { label: '立即備份', primary: true, onClick: () => exportBackup() },
+      { label: '今天先略過' } // 一定要有出口
+    ]
+  });
+}
+
+/* ---------- 無痕模式偵測 ---------- */
+function checkPrivateMode() {
+  try {
+    const testKey = '__test_write__';
+    localStorage.setItem(testKey, '1');
+    localStorage.removeItem(testKey);
+  } catch (e) {
+    showModal({
+      title: '⚠️ 無法寫入儲存空間',
+      body: '目前似乎是無痕模式或瀏覽器限制了儲存，資料將不會被保留。請改用一般視窗開啟。',
+      actions: [{ label: '我知道了', primary: true }]
+    });
+  }
+}
+
+/* ---------- 通用彈窗 ---------- */
+function showModal({ title, body, actions }) {
+  document.getElementById('modalTitle').textContent = title || '';
+  document.getElementById('modalBody').textContent = body || '';
+  const box = document.getElementById('modalActions');
+  box.innerHTML = '';
+  (actions || []).forEach(a => {
+    const btn = document.createElement('button');
+    btn.textContent = a.label;
+    if (a.primary) btn.className = 'primary';
+    if (a.danger) btn.className = 'danger';
+    btn.addEventListener('click', () => {
+      closeModal();
+      if (a.onClick) a.onClick();
+    });
+    box.appendChild(btn);
+  });
+  document.getElementById('modalOverlay').classList.add('show');
+}
+function closeModal() {
+  document.getElementById('modalOverlay').classList.remove('show');
+}
+
+/* ---------- toast ---------- */
+let toastTimer = null;
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 1600);
+}
+
+/* ---------- 事件綁定 ---------- */
+function bindEvents() {
+  // 篩選 tab
+  document.getElementById('filterTabs').addEventListener('click', (e) => {
+    const btn = e.target.closest('button'); if (!btn) return;
+    currentFilter = btn.dataset.filter;
+    document.querySelectorAll('#filterTabs button').forEach(b =>
+      b.classList.toggle('active', b === btn));
+    renderList();
+  });
+
+  // 搜尋（即時）
+  document.getElementById('searchInput').addEventListener('input', (e) => {
+    searchText = e.target.value;
+    renderList();
+  });
+
+  // 新增
+  document.getElementById('addBtn').addEventListener('click', startNew);
+
+  // 編輯欄位變動 → 自動存（或更新草稿提示）
+  ['fDate', 'fProject', 'fType', 'fWeekStart', 'fWeekEnd', 'fContent'].forEach(id => {
+    const el = document.getElementById(id);
+    const evt = (id === 'fContent') ? 'input' : 'change';
+    el.addEventListener(evt, () => {
+      if (id === 'fType') toggleWeekFields();
+      scheduleAutoSave();
+    });
+  });
+
+  // 儲存（新草稿）
+  document.getElementById('saveBtn').addEventListener('click', saveDraft);
+  // 複製 / 刪除
+  document.getElementById('copyBtn').addEventListener('click', copyCurrent);
+  document.getElementById('deleteBtn').addEventListener('click', deleteCurrent);
+
+  // 匯出 / 匯入
+  document.getElementById('exportBtn').addEventListener('click', exportBackup);
+  document.getElementById('importBtn').addEventListener('click', () =>
+    document.getElementById('importFile').click());
+  document.getElementById('importFile').addEventListener('change', (e) => {
+    const f = e.target.files[0];
+    if (f) importBackup(f);
+    e.target.value = ''; // 允許重複匯入同檔
+  });
+
+  // 點 modal 背景不關閉（避免誤觸），僅按鈕關閉
+  // 切換頁面前確保寫入
+  window.addEventListener('beforeunload', flushSave);
+}
+
+/* ---------- 初始化 ---------- */
+function init() {
+  checkPrivateMode();
+  loadData();
+  bindEvents();
+  renderList();
+  updateUsage();
+  updateBackupLabel();
+  checkBackupReminder();
+}
+
+document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>
